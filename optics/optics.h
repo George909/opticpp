@@ -1,6 +1,7 @@
 #ifndef OPTICS_H
 #define OPTICS_H
 
+#include <iostream>
 #include <concepts>
 #include <vector>
 #include <array>
@@ -32,16 +33,21 @@ namespace optics {
     };
 
     struct some_ampl {
+        double na;
         double sin_sigma;
-        double sin_alpha;
+        double f;
+        double x_ratio;
         some_ampl() = default;
-        some_ampl(double sin_sigma, double sin_alpha) 
-            : sin_sigma{sin_sigma}, sin_alpha{sin_alpha} {};
-        double operator()(const double x, const double y) const {
-            double angle =  std::abs(std::atan2(y, x));
-            double sin_angle = std::sin(angle);
-            return std::exp(-sin_angle * sin_angle / sin_sigma / sin_sigma) * sin_angle / sin_alpha;
-        };
+        some_ampl(double na, double f, double x_ratio) : na{na}, f{f}, x_ratio{x_ratio}, sin_sigma{0.5 * na} {};
+        double operator()(const double x, const double y) const { 
+            double x_in = x * x_ratio;
+            double y_in = y * x_ratio;
+            double r_in = std::sqrt(x_in * x_in + y_in * y_in);
+            double theta = std::atan2(r_in, f);
+            double sin_theta = std::sin(theta);
+
+            return std::exp(-(sin_theta * sin_theta / sin_sigma / sin_sigma)) * sin_theta / na;
+        }
     };
 
     struct vortex_phase {
@@ -55,19 +61,9 @@ namespace optics {
         }
     };
 
-    struct some_phase {
-        double a, b, n, m;
-        some_phase() = default;
-        some_phase(double a, double b, double n, double m)
-            : a{a}, b{b}, n{n}, m{m} {};
-        double operator() (const double x, const double y) const {
-            return a * std::pow(x, n) + b * std::pow(y, m);
-        }; 
-    };
-
     template<typename Ampl = gauss_ampl, 
              typename Phase = vortex_phase>
-    vec_complex beam(size_t w, size_t h, Ampl ampl = {}, Phase phase = {}) {
+    vec_complex beam(size_t w, size_t h, double shift,  Ampl ampl = {}, Phase phase = {}) {
         vec_complex field(w*h);
         std::transform(std::execution::par,
                        boost::counting_iterator<size_t>{0},
@@ -76,7 +72,7 @@ namespace optics {
                        [=](const size_t& index) -> complex {
                            double x = index % w + 1 - w / 2.;
                            double y = index / w + 1 - h / 2.;
-                           return ampl(x,y) * std::exp(1i * phase(x,y));
+                           return ampl(x,y) * std::exp(1i * phase(x + shift,y));
                        });
 
         return field;
@@ -138,7 +134,7 @@ namespace optics {
     struct azimutal {
         vec3_complex operator()(const double& phi, const double& theta) const {
             return {std::sin(phi),
-                    -std::cos(theta),
+                    -std::cos(phi),
                     0.};
         }
     };
@@ -204,80 +200,77 @@ namespace optics {
                        rw_tr);
     };
 
-    struct frenel_inf {
-        double out_w;
-        double out_h;
-        double in_h;
-        double in_w;
-        double lambda;
-        double d;
+    inline double der(double f1, double f2, double step) {
+        return (f2 - f1) / 2. / step;
+    };
+    
+    inline double left_der(double f1, double f2, double step) {
+        return (f2 - f1) / step;
+    };
+   
+    inline double right_der(double f1, double f2, double step) {
+        return (f2 - f1) / step;
+    };     
+
+    struct environment {
+        double a;
+        double n1;
+        double n2;
+        double epsilon0;
+        double epsilon;
+        double w;
+        double h;
+        double l;
+    };
+    
+    class vec3 {
+        private:
+            double vec[3]; 
+        public:
+            vec3() = default;
+            vec3(double x, double y, double z)
+            {
+                vec[0] = x;
+                vec[1] = y;
+                vec[2] = z;
+            }
+            friend vec3 operator+(const vec3& v1, const vec3& v2) {
+                return vec3(v1.vec[0] + v2.vec[0],v1.vec[1] + v2.vec[1],v1.vec[2] + v2.vec[2]);
+            }
+            friend vec3 operator+(const double& value, const vec3& v) {
+                return vec3(value * v.vec[0],value * v.vec[1],value * v.vec[2]);
+            }
+            double abs() {
+                return std::sqrt(vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2]); 
+            }
     };
 
-    
-    std::valarray<std::complex<double>> fft(std::valarray<std::complex<double>>& input) {
-        
-        size_t n = input.size();
-        
-        
+    inline void frc( vec_vec3_complex& input, std::vector<double>& output, size_t w, size_t h, double step, environment env) {
+        double k = 2 * M_PI / env.l;
+        complex alpha0 = 4 * env.epsilon0 * std::pow(env.a, 3.) * (env.epsilon - 1) / (env.epsilon + 2);
+        complex alpha = alpha0 / (1. - 1i * alpha0 * std::pow(k,3.) / 6. / M_PI / env.epsilon0);
+        double sigma = k * alpha.imag() / env.epsilon0;        
+        std::cout << alpha << std::endl;
 
-        
+        std::vector<std::complex<double>> field(w*h);
+        std::transform(input.begin(), input.end(), field.begin(),[](vec3_complex v) -> std::complex<double>{
+                return v[0] + v[1] + v[2];
+                });
+        std::vector<double> I(w*h);
+        std::transform(input.begin(), input.end(), I.begin(), [](vec3_complex v) -> double{
+                
+                return std::pow(std::abs(v[0]),2.) + std::pow(std::abs(v[1]),2.) + std::pow(std::abs(v[2]),2.); 
+                });
+
+        for(size_t i = 1; i < h; i++) { 
+            for(size_t j = 1; j < w - 1; j++) {
+                double Ixl = I[w*i+j];
+                double Ixr = I[w*i+j+1]; 
+                double Ixu = I[w*(i+1)+j]; 
+                double Ixd = I[w*i+j]; 
+                output[ w * i + j ] = alpha.real() / 4. * (std::pow(right_der(Ixl, Ixr, step),2.) + std::pow(der(Ixd, Ixu, step), 2.));
+            }
+        }
     };
-
-    vec_complex fft2d(vec_complex& input, size_t w, size_t h) {
-        vec_complex output(w*h);
-
-        return output;
-    }
-
-    vec_complex frenel(vec_complex& input, frenel_inf inf, size_t w, size_t h) {
-    
-        vec_complex output(w*h);
-
-        double out_w_ratio = inf.out_w / w ;
-        double out_h_ratio = inf.out_h / h;
-        double in_w_ratio = inf.in_w / w;
-        double in_h_ratio = inf.in_h / h;
-        double k = 2 * M_PI / inf.lambda;
-        double lambda = inf.lambda;
-        double d = inf.d; 
-        
-        auto sum_up ( [=](const size_t out_index) {
-            double x_out = (out_index % w + 1 - w / 2.) * out_w_ratio;
-            double y_out = (out_index / w + 1 - h / 2.) * out_h_ratio;
-            return [=](const size_t in_index, const complex c) -> complex {
-                double x_in = (in_index % w + 1 - w / 2.) * in_w_ratio;
-                double y_in = (in_index / w + 1 - h / 2.) * in_h_ratio;
-                return c * std::exp(1i * M_PI * (x_in*x_in + y_in*y_in) / lambda / d)
-                         * std::exp(-1i * 2. * M_PI * (x_out / w + y_out / h));    
-            };
-
-        } );    
-
-        auto frenel_tr ( [=](const size_t out_index) -> complex {
-            
-            complex result = std::transform_reduce(boost::counting_iterator<size_t>{0},
-                                         boost::counting_iterator<size_t>{w*h},    
-                                         input.begin(),
-                                         complex{},
-                                         std::plus<complex>(),
-                                         sum_up(out_index));
-
-            double coef = lambda * d;
-            double x_out = (out_index % w + 1 - w / 2.) * out_w_ratio;
-            double y_out = (out_index / w + 1 - h / 2.) * out_h_ratio;
-
-            return result  * std::exp(1i * 2. * M_PI * d / lambda)
-                           * std::exp(1i * M_PI * (x_out * x_out + y_out * y_out) / coef)
-                           / 1i / coef;
-        });
-
-        std::transform(boost::counting_iterator<size_t>{0},
-                       boost::counting_iterator<size_t>{w*h},
-                       output.begin(),
-                       frenel_tr);
-        
-        return output;
-   }
 }
-
 #endif // OPTICS_H

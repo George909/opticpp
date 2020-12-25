@@ -3,13 +3,19 @@
 
 #include <QMainWindow>
 #include <QImage>
+#include <QFileDialog>
+#include <QPixmap>
+#include <QString>
 
 #include <vector>
 #include <complex>
 #include <array>
 #include <algorithm>
 #include <execution>
+#include <string>
+
 #include "polarization.h"
+#include "force.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -32,7 +38,9 @@ private slots:
 
     void on_polarization_clicked();
 
-    void on_frenel_clicked();
+    void on_actionSave_triggered();
+
+    void on_Force_clicked();
 
 private:
     Ui::MainWindow *ui;
@@ -50,8 +58,10 @@ private:
     QImage input_a, input_p, output_a, output_p,
            output_ax, output_px, output_ay,
            output_py, output_az, output_pz;
-
+    QPixmap polarization;
     std::vector<std::array<std::complex<double>, 3>> output_field;
     Polarization p;
+    force f;
+    QString last_path;
 };
 #endif // MAINWINDOW_H

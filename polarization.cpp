@@ -9,7 +9,7 @@ Polarization::Polarization(QWidget *parent) :
 }
 
 
-void Polarization::set_image(QImage& img,
+QPixmap Polarization::set_image(QImage& img,
                              std::vector<std::array<std::complex<double>, 3>>& field)
 {
     double s0, s1, s2, s3;
@@ -34,14 +34,14 @@ void Polarization::set_image(QImage& img,
 
             hi = std::asin(s3 / s0) / 2.;
             ratio = std::tan(hi);
-            angle = (std::atan2(s2, s1)) / 2. / M_PI * 180;
+            angle = (std::atan2(s2,s1)) / 2. / M_PI * 180;
 
             double arrow_angle = 0.45;
             painter.save();
             painter.translate(i, j);
             painter.rotate(-angle);
             painter.translate(-i, -j);
-            painter.drawEllipse(QPoint(i, j), 8, static_cast<int>(8 * ratio));
+            painter.drawEllipse(QPoint(i, j), static_cast<int>(8 * ratio), 8);
             painter.restore();
 
             if (s3 < 0) {
@@ -67,6 +67,7 @@ void Polarization::set_image(QImage& img,
         }
     }
     ui->image->setPixmap(this->image);
+    return image;
 }
 
 Polarization::~Polarization()

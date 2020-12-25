@@ -3,6 +3,10 @@
 #include "optics/optics.h"
 #include <chrono>
 #include <QDebug>
+#include <QDir>
+#include <iostream>
+#include <fstream>
+#include <QString>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -79,14 +83,17 @@ void MainWindow::field_to_images(const std::vector<std::complex<double>> &field,
                    field.end(),
                    p.bits(),
                    [](const std::complex<double>& c){
-                       return (std::arg(c) + M_PI) / 2. / M_PI * 255.;});
+                       return (std::arg(c) + M_PI) / 2. / M_PI * 255;});
 }
 
 //CALCULTE INPUT FIELD
 void MainWindow::on_pushButton_clicked() {
-
-    this->input_field = optics::beam(image_w, image_h, 
-                                     optics::some_ampl(ui->sigma->text().toDouble(), 0.25), 
+    double na = ui->na->text().toDouble();
+    double size_x = ui->size_input_x->text().toDouble();
+    optics::some_ampl ampl(na, size_x / 2. / std::tan(na), size_x / image_w);
+    this->input_field = optics::beam(image_w, image_h,
+                                     ui->shift->text().toDouble(), 
+                                     ampl, 
                                      optics::vortex_phase(ui->t_charge->text().toDouble(), 
                                                           ui->phi->text().toDouble()));
 
@@ -135,22 +142,22 @@ void MainWindow::on_pushButton_2_clicked()
     field_to_images(output_field, output_az, output_pz, dimension::Z);
 
     auto compare_vec3 ([=](const auto& c1, const auto& c2) -> bool {
-        return std::abs(c1[0]) + std::abs(c1[1]) + std::abs(c1[2]) <
-               std::abs(c2[0]) + std::abs(c2[1]) + std::abs(c2[2]);});
+        return std::pow( std::abs(c1[0]), 2.) + std::pow(std::abs(c1[1]), 2.) + std::pow(std::abs(c1[2]), 2.) <
+               std::pow(std::abs(c2[0]), 2.) + std::pow(std::abs(c2[1]), 2.) + std::pow(std::abs(c2[2]), 2.);});
 
     std::array<std::complex<double>,3> c = (*std::max_element(std::execution::par,
                                                output_field.begin(),
                                                output_field.end(),
                                                compare_vec3));
 
-    double max_a = std::abs(c[0]) + std::abs(c[1]) + std::abs(c[2]);
+    double max_a = std::pow(std::abs(c[0]), 2.) + std::pow(std::abs(c[1]), 2.) + std::pow(std::abs(c[2]), 2.);
 
     std::transform(std::execution::par,
                    output_field.begin(),
                    output_field.end(),
                    output_a.bits(),
                    [=](const auto& c) {
-                       return (std::abs(c[0]) + std::abs(c[1]) + std::abs(c[2])) / max_a * 255.;});
+                       return (std::pow(std::abs(c[0]), 2.) + std::pow(std::abs(c[1]), 2.) + std::pow(std::abs(c[2]), 2.)) / max_a * 255.;});
 
     ui->output_a->setPixmap(QPixmap::fromImage(output_a));
     ui->output_ax->setPixmap(QPixmap::fromImage(output_ax));
@@ -162,25 +169,90 @@ void MainWindow::on_pushButton_2_clicked()
 }
 
 void MainWindow::on_polarization_clicked(){
-    p.set_image(this->output_a, this->output_field);
+    this->polarization = p.set_image(this->output_a, this->output_field);
     p.show();
+    this->ui->output_i->setPixmap(this->polarization);
 }
 
-void MainWindow::on_frenel_clicked()
+void MainWindow::on_actionSave_triggered()
 {
-    optics::frenel_inf inf;
+    this->last_path = QFileDialog::getSaveFileName(this, tr("Save field" ), this->last_path, "");
+    QDir dir(last_path);
+    dir.mkpath(".");
+    
+    qDebug() << dir.absolutePath();
+    
+    this->input_a.save(dir.absolutePath() + "/"  + "input_a.BMP", "BMP");
+    this->input_p.save(dir.absolutePath() + "/" + "input_p.BMP", "BMP");
+    this->output_a.save(dir.absolutePath() + "/" + "output_i.BMP", "BMP"); 
+    this->output_ax.save(dir.absolutePath() + "/" + "output_ax.BMP", "BMP");
+    this->output_ay.save(dir.absolutePath() + "/" + "output_ay.BMP", "BMP");
+    this->output_az.save(dir.absolutePath() + "/" + "output_az.BMP", "BMP");
+    this->output_px.save(dir.absolutePath() + "/" + "output_px.BMP", "BMP");
+    this->output_py.save(dir.absolutePath() + "/" + "output_py.BMP", "BMP");
+    this->output_pz.save(dir.absolutePath() + "/" + "output_pz.BMP", "BMP");
+    this->polarization.save(dir.absolutePath() + "/" + "polarization.BMP", "BMP"); 
 
-    inf.d = this->ui->na->text().toDouble();
-    inf.lambda = 532e-9;
-    inf.in_h = this->ui->size_input_y->text().toDouble();
-    inf.in_w = this->ui->size_input_x->text().toDouble();
-    inf.out_h = this->ui->size_output_y->text().toDouble();
-    inf.out_w = this->ui->size_output_x->text().toDouble();
+    QString fname(dir.absolutePath() + "/" + "field.txt");
+    std::string str = fname.toStdString();
+    std::ofstream stream(str);
+    
+    for (size_t i = 0; i < image_h; i++) {
+        for(size_t j = 0; j < image_w; j++) {
+            for (auto& e : this->output_field[i * image_w + j]) {
+                stream << e << "\t"; 
+            }
+        }
+        stream << std::endl;    
+    }
+    QString fname2(dir.absolutePath() + "/" "info.txt");
+    str = fname2.toStdString();
+    std::ofstream stream2(str);
 
-    std::vector<std::complex<double>> field = optics::frenel(input_field, inf, image_w, image_h);
+    stream2 << "input size X: " << ui->size_input_x->text().toDouble() << std::endl;
+    stream2 << "input size Y: " << ui->size_input_y->text().toDouble() << std::endl;
+    stream2 << "output size X: " << ui->size_output_x->text().toDouble() << std::endl;
+    stream2 << "output size Y: " << ui->size_output_y->text().toDouble() << std::endl;
+    stream2 << "lambda: " << 532 << std::endl;
+    stream2 << "m: " << ui->t_charge->text().toDouble() << std::endl;
+    stream2 << "n: " << ui->phi->text().toDouble() << std::endl;
+    stream2 << "na: " << ui->na->text().toDouble() << std::endl;
+    stream2 << "shift: " << ui->shift->text().toDouble() << std::endl;
+    
+    switch (this->ui->pol_type->currentIndex()) {
+        case 0 :
+            stream2 << "polarization: linear" << std::endl;  
+            break;
+        case 1 :
+            stream2 << "polarization: rcircular" << std::endl;  
+            break;
+        case 2 :
+            stream2 << "polarization: lcircular" << std::endl;  
+            break;
+        case 3 :
+            stream2 << "polarization: radial" << std::endl;  
+            break;
+        case 4 :
+            stream2 << "polarization: azimutal" << std::endl;  
+            break;
+    }
 
-    field_to_images(field, output_a, output_p);
+    stream.close(); 
+    stream2.close();
+    dir.cd("..");
+    this->last_path = dir.absolutePath();
+}
 
-    ui->output_a->setPixmap(QPixmap::fromImage(output_a));
-    ui->output_i->setPixmap(QPixmap::fromImage(output_p));
+void MainWindow::on_Force_clicked()
+{
+    optics::environment env;
+    env.a = 50e-09;
+    env.epsilon = 8.854187817e-12;
+    env.n1 = 1.33;
+    env.n2 = 1;
+    env.l = 532e-09; 
+    env.epsilon = 1.59;
+    double step = ui->size_output_x->text().toDouble() / image_w;
+    f.set_image(output_field, env, step);
+    f.show(); 
 }

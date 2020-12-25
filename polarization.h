@@ -20,7 +20,7 @@ class Polarization : public QDialog
 public:
     explicit Polarization(QWidget *parent = nullptr);
 
-    void set_image(QImage& img,
+    QPixmap set_image(QImage& img,
                    std::vector<std::array<std::complex<double>, 3>>& field);
 
     ~Polarization();
